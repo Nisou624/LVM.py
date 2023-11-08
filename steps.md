@@ -96,7 +96,3 @@
             ```bash
             sudo pvs --noheadings --units g -o pv_name,,pv_size,pv_free
             ```
-            
-        
-- [ ]  watch CCNA playlist
-- [ ]  C-NEAT (GUI branch)(UI/UX)
