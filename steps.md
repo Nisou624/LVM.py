@@ -2,7 +2,7 @@
     - Init
         - [ ]  create a script to init
         
-        To simulate LVM (Logical Volume Management) without installing a virtual machine, you can create virtual storage using loop devices. Loop devices allow you to create files that act as block devices, which can then be used as physical volumes (PVs) in your LVM setup. Here's how you can do it:
+            To simulate LVM (Logical Volume Management) without installing a virtual machine, you can create virtual storage using loop devices. Loop devices allow you to create files that act as block devices, which can then be used as physical volumes (PVs) in your LVM setup. Here's how you can do it:
         
         1. **Create a Virtual Disk File**:
         First, create a file that will serve as your virtual disk. You can do this using the `dd` command or any other method you prefer. For example, to create a 1GB file named `my_virtual_disk.img`, run:

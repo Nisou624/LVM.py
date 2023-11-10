@@ -1,5 +1,15 @@
 import subprocess
 import logging
+from datetime import datetime
+
+date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+logging.basicConfig(
+    level= logging.DEBUG,
+    format="%(asctime)s : %(levelname)s : %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    filename=f'logs/{date}.log'
+)
 
 """
 class VG:
@@ -111,7 +121,7 @@ for lv in lvs:
 """
 
 # Run the df command and capture its output
-output = subprocess.check_output(["df", "-H"]).decode("utf-8")
+output = subprocess.check_output(["sudo", "df", "-H"]).decode("utf-8")
 
 # Filter the output to show only lines containing '/dev/mapper'
 filtered_output = [line for line in output.splitlines() if '/dev/mapper' in line]
@@ -142,18 +152,32 @@ for obj in parsed_objects:
         mount_point = obj["Mount Point"]
 
         # Unmount the filesystem
-        subprocess.call(["umount", mount_point])
+        c = subprocess.call(["sudo", "umount", mount_point], capture_output=True, text=True)
+        if c.returncode != 0:
+            logging.error(c.stderr)
+        else:
+            logging.info(c.stdout)
 
         # Extend the LV by 1GB using the 'lvextend' command
-        subprocess.call(["lvextend", "-L", "+1G", "/dev/mapper/" + lv_name])
-
+        c = subprocess.call(["sudo", "lvextend", "-L", "+1G", "/dev/mapper/" + lv_name], capture_output=True, text=True)
+        if c.returncode != 0:
+            logging.error(c.stderr)
+        else:
+            logging.info(c.stdout)
         # Resize the filesystem to use the new space using 'resize2fs' or 'xfs_growfs' based on the filesystem type
         if "/xfs" in obj["Filesystem"]:
-            subprocess.call(["xfs_growfs", mount_point])
+            c = subprocess.call(["sudo ", "xfs_growfs", mount_point], capture_output=True, text=True)
+            if c.returncode != 0:
+                logging.error(c.stderr)
+            else:
+                logging.info(c.stdout)
         else:
-            subprocess.call(["resize2fs", "/dev/mapper/" + lv_name])
-
+            c = subprocess.call(["sudo", "resize2fs", "/dev/mapper/" + lv_name], capture_output=True, text=True)
+            if c.returncode != 0:
+                logging.error(c.stderr)
+            else:
+                logging.info(c.stdout)
         # Remount the filesystem
-        subprocess.call(["mount", mount_point])
+        subprocess.call(["sudo", "mount", "/dev/mapper/" + lv_name, mount_point])
 
 
