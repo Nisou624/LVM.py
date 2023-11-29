@@ -9,8 +9,8 @@ date = datetime.now().strftime('%Y-%m-%d %H:%M')
 
 logging.basicConfig(
     level=logging.DEBUG,
-    format="%(asctime)s : %(levelname)s : %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+    format="[%(asctime)s] %(levelname)s : %(message)s",
+    datefmt="%H:%M:%S",
     filename=f'logs/{date}.log'
 )
 
@@ -90,17 +90,17 @@ def parse_lvs_output(output):
 
 def get_writing_speed(device, interval=1, count=2):
     try:
-        command = ["iostat", "-d", "-k", "-x", device, str(interval), str(count)]
+        command = ["iostat", "-d", "-k", "-x", "-y", device, str(interval), str(count)]
         output = subprocess.check_output(command, stderr=subprocess.STDOUT, text=True)
         lines = output.splitlines()
 
-        writing_speed = float(lines[-1].split()[-1])
+        writing_speed = float(lines[-1].split()[7])
         return writing_speed
     except subprocess.CalledProcessError as e:
         logging.error(f"Error retrieving writing speed for {device}: {e}")
         return None
 
-def calculate_and_sort_filesystems(file_systems, pvs):
+def calculate_and_sort_filesystems(file_systems):
     for fs in file_systems:
         fs["writing_speed"] = get_writing_speed(fs["device"])
 
@@ -224,7 +224,7 @@ def main_thread():
         # Check if there are busy filesystems that need extension
         for fs in sorted_file_systems:
             if fs["Use%"] > 80 and is_filesystem_busy(fs["Mount Point"]):
-                if fs not in busy_filesystems:
+                if  not any(q_fs["Mount Point"] == mount_point for q_fs in list(extension_queue.queue)):
                     # Add the filesystem to the extension queue
                     extension_queue.put(fs)
 
@@ -262,8 +262,8 @@ if __name__ == "__main__":
         # Add more filesystems as needed
     ]
 
-    pvs = parse_pvs_output(subprocess.check_output(["sudo", "pvs", "--units", "g", "--separator", ",", "--noheadings"]))
-    sorted_file_systems = calculate_and_sort_filesystems(file_systems, pvs)
+    pvs = parse_pvs_output(subprocess.check_output(["sudo", "pvs", "--units", "g", "--separator", ",", "--noheadings", "-o",  "pv_name,vg_name,pv_size,pv_free"]))
+    sorted_file_systems = calculate_and_sort_filesystems(file_systems)
 
     busy_filesystems = []  # Define this variable as needed
 
@@ -286,7 +286,7 @@ if __name__ == "__main__":
                 busy_filesystems.append(mount_point)
 
     # Sort the list of blocked filesystems based on predicted need for extension
-    busy_filesystems = calculate_and_sort_filesystems(busy_filesystems, pvs)
+    busy_filesystems = calculate_and_sort_filesystems(busy_filesystems)
 
     # Print the sorted list of blocked filesystems
     print("Sorted list of blocked filesystems based on predicted need for extension:")
