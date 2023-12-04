@@ -1,5 +1,6 @@
 import subprocess
 import logging
+import re
 from datetime import datetime
 
 date = datetime.now().strftime('%Y-%m-%d %H:%M')
@@ -11,6 +12,25 @@ logging.basicConfig(
     filename=f'logs/{date}.log'
 )
 
+
+def convert_to_float(value):
+    match = re.match(r'^([\d.,]+)([GMK]?)$', value, re.IGNORECASE)
+    if match:
+        number, suffix = match.groups()
+        # Replace commas with periods and then convert to float
+        number = number.replace(',', '.')
+        multiplier = {'g': 1, 'm': 1e-3, 'k': 1e-6}.get(suffix.lower(), 1)
+        return float(number) * multiplier
+    else:
+        # Check for 'k', 'm', or 'g' suffix separately
+        if value.lower().endswith('k'):
+            return float(value[:-1]) * 1e-6  # Convert kilobytes to gigabytes
+        elif value.lower().endswith('m'):
+            return float(value[:-1]) * 1e-3  # Convert megabytes to gigabytes
+        elif value.lower().endswith('g'):
+            return float(value[:-1])  # Already in gigabytes
+        else:
+            return float(value.replace(',', '.'))
 
 class VG:
     def __init__(self, vg_name, num_pvs, num_lvs, num_sn, attributes, vsize, vfree):
@@ -116,20 +136,24 @@ def extendLV(lvName, Size="1G") -> None:
         if extendVG(lvName, Size):
             extendLV(lvName, Size)
         else:
-            rstf = Size #remaining size to fetch
-            potential_fs = [fs for fs in parsed_objects if fs["Available"] -(get_writing_speed(fs) * 1024 * 1024 * 3600) > fs["Size"] * 0.8]
+            rstf = float(Size.rstrip('G'))  # remaining size to fetch
+            potential_fs = [fs for fs in parsed_objects if (fs["Available"] - (get_writing_speed(fs["Filesystem"]) * 1024 * 1024 * 3600) > fs["Size"] * 0.8) and fs["Filesystem"].split("/")[-1] != lvName]
             for fs in potential_fs:
-                if rstf <= 0 : break
-                asfe = (fs["Size"] * 0.7) - fs["Used"] #0.8 - 0.1  we take the threshold and we leave 10% for security  // asfe = available size for extension
-                if not is_filesystem_busy(fs) and fs["Filesystem"].split("/")[-1]  != lvName:
+                if rstf <= 0:
+                    break
+                asfe = (fs["Size"] * 0.7) - fs["Used"]  # 0.8 - 0.1  we take the threshold and we leave 10% for security (arbitrary values) // asfe = available size for extension
+                if not is_filesystem_busy(fs["Mount Point"]) and fs["Filesystem"].split("/")[-1] != lvName:
                     if rstf <= asfe:
                         unmount_filesystem(fs["Mount Point"])
-                        reduce_filesystem(lvName, fs["Filesystem"], fs["Mount Point"], asfe)
+                        reduce_filesystem(fs["Filesystem"].split("/")[-1], fs["Filesystem"], fs["Mount Point"], str(int(round(fs["Size"] -rstf))) + 'G')
+                        remount_filesystem(fs["Filesystem"].split("/")[-1], fs["Mount Point"])
+                        rstf -= rstf
+                    else:
+                        unmount_filesystem(fs["Mount Point"])
+                        reduce_filesystem(lvName, fs["Filesystem"], fs["Mount Point"], str(asfe) + 'G')
                         remount_filesystem(lvName, fs["Mount Point"])
                         rstf -= asfe
-                    else:
-                        pass
-            extendLV(lvName, Size) #check the logic of this shit
+            extendLV(lvName, Size)  # check the logic of this
             if c.returncode != 0:
                 logging.critical("There's no available space for extending")
     else:
@@ -211,16 +235,29 @@ def append_filesystem(lv_name, filesystem_type, mount_point):
 todo :
 - reduce the LV (size passed as param)
 - resize the FS
+
+steps:
+    -lvreduce
+    -resize2fs with precise size
 """
 def reduce_filesystem(lv_name, filesystem_type, mount_point, new_size="1G"):
-    # Reduce the LV size using the 'lvreduce' command
-    subprocess.run(["sudo", "lvreduce", "-L", new_size, f"/dev/mapper/{lv_name}"], check=True)
 
     # Run e2fsck before resizing
     check_result = subprocess.run(["sudo", "e2fsck", "-f", "-y", f"/dev/mapper/{lv_name}"], capture_output=True, text=True)
     if check_result.returncode != 0:
         logging.error(f"Error running e2fsck: {check_result.stderr}")
         return False
+
+    # Reduce the FS before
+    subprocess.run(["sudo", "resize2fs", f"/dev/mapper/{lv_name}", new_size], capture_output=True, text=True)
+    
+    # Reduce the LV size using the 'lvreduce' command
+    try:
+        lvreduce_result = subprocess.run(["sudo", "lvreduce", "-f", "-L", new_size, f"/dev/mapper/{lv_name}"], capture_output=True, text=True, check=True)
+        lvreduce_output = lvreduce_result.stdout.strip().splitlines()[-1]  # Extract the last line of the stdout
+        logging.info(lvreduce_output)  # Log the last line as info
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Error reducing logical volume: {e.stderr}")
 
     # Resize the filesystem based on the filesystem type
     if "/xfs" in filesystem_type:
@@ -257,9 +294,9 @@ for line in filtered_output:
         # Create a dictionary to store the information for each line
         disk_info = {
             "Filesystem": filesystem,
-            "Size": size,
-            "Used": used,
-            "Available": available,
+            "Size": convert_to_float(size),
+            "Used": convert_to_float(used),
+            "Available": convert_to_float(available),
             "Use%": int(use_percent.rstrip('%')),
             "Mount Point": mount_point,
         }
